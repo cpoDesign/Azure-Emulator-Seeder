@@ -1,0 +1,14 @@
+{
+    "defintion": {
+        "topicName": "topic.1"
+    },
+  "msgCustomProperties": {
+    "customProperty1": "value1",
+    "customProperty2": "value2"
+  },
+  "msgData": {
+    "messageId": "123",
+    "message": "Hello World!",
+    "timestamp": "2023-10-01T12:00:00Z"
+  }
+}

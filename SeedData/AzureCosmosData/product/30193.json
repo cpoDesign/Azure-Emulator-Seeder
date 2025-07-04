@@ -1,0 +1,11 @@
+{
+  "seedConfig": {
+    "id": "1",
+    "pk": "2023",
+    "db": "product"
+  },
+  "seedData": {
+    "id": 1,
+    "description": "this a test desciption for a document"
+  }
+}

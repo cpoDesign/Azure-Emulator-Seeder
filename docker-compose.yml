@@ -1,0 +1,94 @@
+services:
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite
+    ports:
+      - "10000:10000" # Blob Storage
+      - "10001:10001" # Queue Storage
+      - "10002:10002" # Table Storage
+    volumes:
+      - azurite_data:/data
+    command: "azurite --blobHost 0.0.0.0 --queueHost 0.0.0.0 --tableHost 0.0.0.0"
+
+  cosmos-db:
+    image: mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator
+    mem_limit: 3g
+    cpu_count: 2
+    environment:
+      - AZURE_COSMOS_EMULATOR_PARTITION_COUNT=10
+      - AZURE_COSMOS_EMULATOR_ENABLE_DATA_PERSISTENCE=true
+      - AZURE_COSMOS_EMULATOR_IP_ADDRESS_OVERRIDE=127.0.0.1
+    ports:
+      - "8081:8081"
+      - "8900:8900"
+      - "8901:8901"
+      - "8979:8979"
+      - "10250-10255:10250-10255"
+    volumes:
+      - cosmos_data:/data/db
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+
+  servicebus:
+    container_name: "servicebus-emulator"
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    volumes:
+      - ./servicebus-config.json:/ServiceBus_Emulator/ConfigFiles/Config.json:ro
+    ports:
+      - "5672:5672"
+      - "5000:5000"
+      - "9090:9090"
+    environment:
+      SQL_SERVER: sqledge
+      MSSQL_SA_PASSWORD: myStrongP@ssw0rd
+      ACCEPT_EULA: "Y"
+      SERVICEBUS_EMULATOR__DEFAULTUSER__USERNAME: admin
+      SERVICEBUS_EMULATOR__DEFAULTUSER__PASSWORD: admin
+      SERVICEBUS_EMULATOR__LOGGING__LOGLEVEL__DEFAULT: Information
+      SERVICEBUS_EMULATOR__CONFIG: /ServiceBus_Emulator/ConfigFiles/Config.json
+      SERVICEBUS_EMULATOR__SQL__CONNECTIONSTRING: Server=sqledge,1433;Database=servicebus;User Id=sa;Password=myStrongP@ssw0rd;TrustServerCertificate=true;
+    depends_on:
+      - sqledge
+    networks:
+      sb-emulator:
+        aliases:
+          - "sb-emulator"
+
+  sqledge:
+    container_name: "sqledge"
+    image: "mcr.microsoft.com/azure-sql-edge:latest"
+    networks:
+      sb-emulator:
+        aliases:
+          - "sqledge"
+    environment:
+      ACCEPT_EULA: Y
+      MSSQL_SA_PASSWORD: myStrongP@ssw0rd
+
+  typesense:
+    image: typesense/typesense:0.25.2
+    container_name: typesense
+    restart: unless-stopped
+    command: >
+      --data-dir /data
+      --api-key=xyz
+    ports:
+      - "8108:8108"
+    volumes:
+      - typesense_data:/data
+
+volumes:
+  azurite_data:
+  cosmos_data:
+  redis_data:
+  sqledge_data:
+  typesense_data:
+
+networks:
+  sb-emulator:
+    driver: bridge
