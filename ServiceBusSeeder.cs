@@ -2,7 +2,7 @@ using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Logging;
 
-namespace cosmosSeered;
+namespace DataSeeder;
 
 public static class ServiceBusSeeder
 {

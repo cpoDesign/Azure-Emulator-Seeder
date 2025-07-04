@@ -1,4 +1,4 @@
-# cosmosSeered Project
+# DataSeeder Project
 
 This project provides utilities for seeding data into Azure Cosmos DB and Azure Service Bus (using the Azure Service Bus Emulator for local development).
 
@@ -21,7 +21,7 @@ This project provides utilities for seeding data into Azure Cosmos DB and Azure 
 
 ```bash
 # Seed Cosmos DB with data from AzureCosmosData, drop and recreate containers
-./cosmosSeered --targetType cosmos --path ./AzureCosmosData --drop
+./DataSeeder --targetType cosmos --path ./AzureCosmosData --drop
 ```
 
 **Windows:**
@@ -42,7 +42,7 @@ DataSeeder.exe --targetType cosmos --path .\AzureCosmosData --drop
 **Linux:**
 
 ```bash
-./cosmosSeered --targetType servicebus --path ./ServiceBusData
+./DataSeeder --targetType servicebus --path ./ServiceBusData
 ```
 
 **Windows:**
@@ -58,7 +58,7 @@ You can use the `--drop` flag to drop and recreate containers before seeding:
 **Linux:**
 
 ```bash
-./cosmosSeered --targetType cosmos --path ./AzureCosmosData --drop
+./DataSeeder --targetType cosmos --path ./AzureCosmosData --drop
 ```
 
 **Windows:**
