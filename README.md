@@ -21,14 +21,21 @@ This project provides utilities for seeding data into Azure Cosmos DB and Azure 
 
 ```bash
 # Seed Cosmos DB with data from AzureCosmosData, drop and recreate containers
-./DataSeeder --targetType cosmos --path ./AzureCosmosData --drop
+./DataSeeder -t cosmos -p ./AzureCosmosData --drop
 ```
 
 **Windows:**
 
 ```powershell
 # Seed Cosmos DB with data from AzureCosmosData, drop and recreate containers
-DataSeeder.exe --targetType cosmos --path .\AzureCosmosData --drop
+DataSeeder.exe -t cosmos -p .\AzureCosmosData --drop
+```
+
+**Development (using dotnet run):**
+
+```bash
+# Note: The -- separator is required when using dotnet run to separate dotnet arguments from application arguments
+dotnet run -- -t cosmos -p .\AzureCosmosData --drop
 ```
 
 ### 2. Seeding Azure Service Bus
@@ -69,12 +76,12 @@ DataSeeder.exe --targetType cosmos --path .\AzureCosmosData --drop
 
 ## Command Line Options
 
-| Option       | Description                                                       |
-| ------------ | ----------------------------------------------------------------- |
-| --targetType | Target to seed: `cosmos`, `servicebus`, or `redis` (not yet impl) |
-| --path       | Path to folder containing data or messages                        |
-| --drop       | (Optional) Drop and recreate containers (Cosmos only)             |
-| --db         | (Optional) Name of the Cosmos DB database                         |
+| Option                | Description                                                       |
+| --------------------- | ----------------------------------------------------------------- |
+| -t, --targetType      | Target to seed: `cosmos`, `servicebus`, or `redis` (not yet impl) |
+| -p, --path            | Path to folder containing data or messages                        |
+| --drop                | (Optional) Drop and recreate containers (Cosmos only)             |
+| -d, --db              | (Optional) Name of the Cosmos DB database                         |
 
 ## Configuration
 

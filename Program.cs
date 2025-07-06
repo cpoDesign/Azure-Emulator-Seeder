@@ -19,7 +19,7 @@ public class Options
     [Option("drop", Required = false, HelpText = "Drop and recreate containers.")]
     public bool DropAndCreate { get; set; } = false;
 
-    [Option("targetType", Required = true, HelpText = "Target type to seed: cosmos, redis, or serviceBus.")]
+    [Option('t', "targetType", Required = true, HelpText = "Target type to seed: cosmos, redis, or serviceBus.")]
     public string TargetType { get; set; } = "cosmos";
 }
 
@@ -61,14 +61,21 @@ public class SeederService
                 continue;
             }
             var containerName = dbName; // Use dbName as container name
+            
+            // Analyze if any documents need partition keys
+            bool needsPartitionKey = await DoesContainerNeedPartitionKey(jsonFiles);
+            string partitionStrategy = needsPartitionKey ? "with explicit partition keys" : "using document ID as partition key";
+            _logger.LogInformation("Container '{Container}' will be created {PartitionKeyStatus}", 
+                containerName, partitionStrategy);
+            
             if (dropAndCreate)
             {
                 _logger.LogInformation("Dropping and recreating container '{Container}' in database '{Db}'...", containerName, dbName);
-                await Program.DropAndCreateContainerBatchAsync(httpClient, dbName, containerName);
+                await Program.DropAndCreateContainerBatchAsync(httpClient, dbName, containerName, needsPartitionKey);
             }
             else
             {
-                await Program.CreateContainerIfNotExistsAsync(httpClient, dbName, containerName);
+                await Program.CreateContainerIfNotExistsAsync(httpClient, dbName, containerName, needsPartitionKey);
             }
             var inserter = new CosmosDbInserter(httpClient, dbName, containerName);
             int successCount = 0;
@@ -84,9 +91,22 @@ public class SeederService
                     var root = doc.RootElement;
                     var seedConfig = root.GetProperty("seedConfig");
                     var id = seedConfig.GetProperty("id").GetString() ?? throw new Exception("Missing id in seedConfig");
-                    var pk = seedConfig.GetProperty("pk").GetString() ?? throw new Exception("Missing pk in seedConfig");
+                    
+                    // Make partition key optional - can be null or empty for documents without partitioning
+                    string? pk = null;
+                    if (seedConfig.TryGetProperty("pk", out var pkProperty))
+                    {
+                        pk = pkProperty.GetString();
+                        // Treat empty string as null for partition key
+                        if (string.IsNullOrEmpty(pk))
+                        {
+                            pk = null;
+                        }
+                    }
+                    
                     var seedData = root.GetProperty("seedData").GetRawText();
-                    _logger.LogInformation("Attempting to insert file: {File} (PK: {PK})", file, pk);
+                    var pkDisplay = pk ?? "none";
+                    _logger.LogInformation("Attempting to insert file: {File} (PK: {PK})", file, pkDisplay);
                     _logger.LogDebug("File content: {Content}", seedData);
                     var result = await inserter.UpsertDocumentAsync(id, pk, seedData);
                     if (result)
@@ -115,6 +135,58 @@ public class SeederService
             Console.WriteLine();
             _logger.LogInformation("Seeding complete for {DbName}. Success: {Success}, Failed: {Failed}, Total: {Total}", dbName, successCount, failCount, total);
         }
+    }
+
+    /// <summary>
+    /// Analyzes JSON files in a directory to determine if any documents have explicit partition keys
+    /// </summary>
+    /// <param name="jsonFiles">Array of JSON file paths to analyze</param>
+    /// <returns>True if any document has an explicit partition key, false if all documents will use document ID as partition key</returns>
+    private async Task<bool> DoesContainerNeedPartitionKey(string[] jsonFiles)
+    {
+        foreach (var file in jsonFiles)
+        {
+            try
+            {
+                var fileContent = await File.ReadAllTextAsync(file);
+                using var doc = JsonDocument.Parse(fileContent);
+                var root = doc.RootElement;
+                var seedConfig = root.GetProperty("seedConfig");
+                
+                // Check if this document has an explicit partition key in seedConfig
+                if (seedConfig.TryGetProperty("pk", out var pkProperty))
+                {
+                    var pk = pkProperty.GetString();
+                    // Only consider it an explicit partition key if it's not empty
+                    if (!string.IsNullOrEmpty(pk))
+                    {
+                        return true; // Found at least one document with an explicit partition key
+                    }
+                }
+                
+                // Also check the seedData section in case pk was added there
+                if (root.TryGetProperty("seedData", out var seedData) && seedData.ValueKind == JsonValueKind.Object)
+                {
+                    if (seedData.TryGetProperty("pk", out var dataPkProperty))
+                    {
+                        var dataPk = dataPkProperty.GetString();
+                        // Only consider it an explicit partition key if it's not empty
+                        if (!string.IsNullOrEmpty(dataPk))
+                        {
+                            return true; // Found at least one document with an explicit partition key
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Could not analyze file {File} for partition key detection: {Error}", file, ex.Message);
+                // If we can't parse a file, assume it might need a partition key to be safe
+                return true;
+            }
+        }
+        
+        return false; // No documents have explicit partition keys - all will use document ID as partition key
     }
 }
 
@@ -171,16 +243,32 @@ class Program
         return resp.IsSuccessStatusCode || resp.StatusCode == System.Net.HttpStatusCode.Conflict;
     }
 
-    public static async Task<bool> CreateContainerIfNotExistsAsync(HttpClient client, string dbName, string containerName)
+    public static async Task<bool> CreateContainerIfNotExistsAsync(HttpClient client, string dbName, string containerName, bool needsPartitionKey = true)
     {
         var req = new HttpRequestMessage(HttpMethod.Post, $"/dbs/{dbName}/colls");
         req.Headers.Add("x-ms-date", DateTime.UtcNow.ToString("r"));
         req.Headers.Add("x-ms-version", "2018-12-31");
         req.Headers.Add("Authorization", GenerateAuthToken("post", "colls", $"dbs/{dbName}"));
-        // Partition key is now /pk
-        req.Content = new StringContent($"{{\"id\":\"{containerName}\",\"partitionKey\":{{\"paths\":[\"/pk\"],\"kind\":\"Hash\"}}}}", Encoding.UTF8, "application/json");
+        
+        // All containers need partition keys in modern Cosmos DB
+        // Documents without explicit partition keys will use their document ID as the partition key
+        string containerDefinition = $"{{\"id\":\"{containerName}\",\"partitionKey\":{{\"paths\":[\"/pk\"],\"kind\":\"Hash\"}}}}";
+        
+        req.Content = new StringContent(containerDefinition, Encoding.UTF8, "application/json");
+        
         var resp = await client.SendAsync(req);
-        return resp.IsSuccessStatusCode || resp.StatusCode == System.Net.HttpStatusCode.Conflict;
+        if (resp.IsSuccessStatusCode || resp.StatusCode == System.Net.HttpStatusCode.Conflict)
+        {
+            // Give container time to be fully ready
+            await Task.Delay(1000);
+            return true;
+        }
+        else
+        {
+            var errorContent = await resp.Content.ReadAsStringAsync();
+            Console.WriteLine($"Failed to create container '{containerName}': {resp.StatusCode} - {errorContent}");
+            return false;
+        }
     }
 
     public static string GenerateAuthToken(string verb, string resourceType, string resourceId)
@@ -196,13 +284,13 @@ class Program
         return auth;
     }
 
-    public static async Task DropAndCreateContainerBatchAsync(HttpClient client, string dbName, string containerName)
+    public static async Task DropAndCreateContainerBatchAsync(HttpClient client, string dbName, string containerName, bool needsPartitionKey = true)
     {
         var deleteReq = new HttpRequestMessage(HttpMethod.Delete, $"/dbs/{dbName}/colls/{containerName}");
         deleteReq.Headers.Add("x-ms-date", DateTime.UtcNow.ToString("r"));
         deleteReq.Headers.Add("x-ms-version", "2018-12-31");
         deleteReq.Headers.Add("Authorization", GenerateAuthToken("delete", "colls", $"dbs/{dbName}/colls/{containerName}"));
         await client.SendAsync(deleteReq);
-        await CreateContainerIfNotExistsAsync(client, dbName, containerName);
+        await CreateContainerIfNotExistsAsync(client, dbName, containerName, needsPartitionKey);
     }
 }

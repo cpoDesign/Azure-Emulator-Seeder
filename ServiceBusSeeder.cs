@@ -6,8 +6,6 @@ namespace DataSeeder;
 
 public static class ServiceBusSeeder
 {
-    // Adjust connection string for your emulator if needed
-    //private const string ServiceBusConnectionString = "Endpoint=sb://host.docker.internal;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;";
     private static string ServiceBusConnectionString = "Endpoint=sb://localhost/;SharedAccessKeyName=admin;SharedAccessKey=admin;UseDevelopmentEmulator=true;";
 
     public static async Task RunAsync(string parentPath, ILogger logger)

@@ -1,0 +1,12 @@
+{
+  "seedConfig": {
+    "id": "6430176",
+    "db": "Purchase"
+  },
+  "seedData": {
+    "id": "6430176",
+    "productId": 30193,
+    "Title": "Order 6430176",
+    "Description": "This is a test order for product 30193"
+  }
+}

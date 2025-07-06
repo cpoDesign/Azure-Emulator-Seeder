@@ -1,0 +1,11 @@
+{
+  "seedConfig": {
+    "id": "test-doc-001",
+    "db": "TestContainer"
+  },
+  "seedData": {
+    "id": "test-doc-001",
+    "title": "Test Document 1",
+    "content": "This document has no explicit partition key"
+  }
+}
