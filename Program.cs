@@ -231,7 +231,7 @@ public class SeederService
                     if (!string.IsNullOrEmpty(customContainer))
                     {
                         containerName = customContainer;
-                        _logger.LogInformation("File {File} specifies custom container: '{Container}'", 
+                        _logger.LogDebug("File {File} specifies custom container: '{Container}'", 
                             Path.GetFileName(file), containerName);
                     }
                 }
@@ -268,7 +268,14 @@ class Program
     static async Task<int> Main(string[] args)
     {
         var services = new ServiceCollection();
-        services.AddLogging(configure => configure.AddConsole());
+        services.AddLogging(configure => 
+        {
+            configure.AddSimpleConsole(options =>
+            {
+                options.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff ";
+                options.IncludeScopes = false;
+            });
+        });
         services.AddTransient<SeederService>();
         var provider = services.BuildServiceProvider();
         var logger = provider.GetRequiredService<ILogger<Program>>();

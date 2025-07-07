@@ -245,7 +245,7 @@ SeedData/
 
 ```json
 {
-  "defintion": {
+  "definition": {
     "queueName": "orders.processing"
   },
   "msgCustomProperties": {
@@ -261,7 +261,7 @@ SeedData/
 
 ```json
 {
-  "defintion": {
+  "definition": {
     "topicName": "events.orders"
   },
   "msgCustomProperties": {
@@ -427,13 +427,26 @@ dotnet run -- -t cosmos -p .\SeedData\AzureCosmosData --drop
 
 ### Logging
 
-The application provides detailed logging including:
+The application provides detailed logging with timestamps including:
 
 - Container grouping and creation strategy
 - Document insertion results with container targeting
 - Partition key assignments
 - Custom container name detection
 - Error details with context
+
+**Log Format**: Each log entry includes a timestamp in the format `yyyy-MM-dd HH:mm:ss.fff` followed by the log level and message.
+
+**Example Log Output**:
+
+```text
+2025-07-07 23:41:20.512 info: DataSeeder.SeederService[0]
+      Seeding database: Orders
+2025-07-07 23:41:20.650 info: DataSeeder.SeederService[0]
+      Processing container 'Orders' with 2 documents
+2025-07-07 23:41:20.651 info: DataSeeder.SeederService[0]
+      Container 'Orders' will be created with explicit partition keys
+```
 
 Enable verbose logging by setting the log level in your environment or application configuration.
 
