@@ -98,6 +98,19 @@ public class SeederService
                 {
                     try
                     {
+                        // First validate the JSON structure
+                        var (isValid, validationErrors) = await ValidateJsonStructure(file);
+                        if (!isValid)
+                        {
+                            _logger.LogError("Invalid JSON structure in file '{File}': {Errors}", 
+                                Path.GetFileName(file), string.Join(", ", validationErrors));
+                            failCount++;
+                            current++;
+                            // Show progress for failed validation
+                            ShowProgress(current, total, containerName);
+                            continue;
+                        }
+                        
                         var fileContent = await File.ReadAllTextAsync(file);
                         using var doc = JsonDocument.Parse(fileContent);
                         var root = doc.RootElement;
@@ -140,10 +153,7 @@ public class SeederService
                     }
                     current++;
                     // Progress bar
-                    int barWidth = 40;
-                    double percent = (double)current / total;
-                    int pos = (int)(barWidth * percent);
-                    Console.Write("[" + new string('#', pos) + new string('-', barWidth - pos) + $"] {current}/{total} ({containerName})\r");
+                    ShowProgress(current, total, containerName);
                 }
                 Console.WriteLine();
                 _logger.LogInformation("Seeding complete for container '{Container}' in database '{DbName}'. Success: {Success}, Failed: {Failed}, Total: {Total}", 
@@ -193,9 +203,15 @@ public class SeederService
                     }
                 }
             }
+            catch (JsonException jsonEx)
+            {
+                _logger.LogWarning("Invalid JSON syntax in file {File}: {Error}. Assuming explicit partition key needed for safety.", file, jsonEx.Message);
+                // If we can't parse a file, assume it might need a partition key to be safe
+                return true;
+            }
             catch (Exception ex)
             {
-                _logger.LogWarning("Could not analyze file {File} for partition key detection: {Error}", file, ex.Message);
+                _logger.LogWarning("Could not analyze file {File} for partition key detection: {Error}. Assuming explicit partition key needed for safety.", file, ex.Message);
                 // If we can't parse a file, assume it might need a partition key to be safe
                 return true;
             }
@@ -243,9 +259,20 @@ public class SeederService
                 }
                 containerGroups[containerName].Add(file);
             }
+            catch (JsonException jsonEx)
+            {
+                _logger.LogWarning("Invalid JSON syntax in file {File}: {Error}. Using default container.", 
+                    Path.GetFileName(file), jsonEx.Message);
+                // Use default container for files that can't be parsed
+                if (!containerGroups.ContainsKey(defaultContainerName))
+                {
+                    containerGroups[defaultContainerName] = new List<string>();
+                }
+                containerGroups[defaultContainerName].Add(file);
+            }
             catch (Exception ex)
             {
-                _logger.LogWarning("Could not parse file {File} for container grouping: {Error}. Using default container.", 
+                _logger.LogWarning("Could not process file {File} for container grouping: {Error}. Using default container.", 
                     Path.GetFileName(file), ex.Message);
                 // Use default container for files that can't be parsed
                 if (!containerGroups.ContainsKey(defaultContainerName))
@@ -257,6 +284,92 @@ public class SeederService
         }
         
         return containerGroups;
+    }
+
+    /// <summary>
+    /// Validates that a JSON file has the correct structure for seeding
+    /// </summary>
+    /// <param name="file">Path to the JSON file</param>
+    /// <returns>Validation result with success status and error messages</returns>
+    private async Task<(bool IsValid, List<string> ValidationErrors)> ValidateJsonStructure(string file)
+    {
+        var validationErrors = new List<string>();
+        
+        try
+        {
+            var fileContent = await File.ReadAllTextAsync(file);
+            
+            // Check if file is empty
+            if (string.IsNullOrWhiteSpace(fileContent))
+            {
+                validationErrors.Add("File is empty");
+                return (false, validationErrors);
+            }
+            
+            using var doc = JsonDocument.Parse(fileContent);
+            var root = doc.RootElement;
+            
+            // Check for required seedConfig section
+            if (!root.TryGetProperty("seedConfig", out var seedConfig))
+            {
+                validationErrors.Add("Missing required 'seedConfig' section");
+                return (false, validationErrors);
+            }
+            
+            // Check for required id field
+            if (!seedConfig.TryGetProperty("id", out var idProperty))
+            {
+                validationErrors.Add("Missing required 'id' field in seedConfig");
+                return (false, validationErrors);
+            }
+            
+            var id = idProperty.GetString();
+            if (string.IsNullOrEmpty(id))
+            {
+                validationErrors.Add("The 'id' field in seedConfig cannot be empty");
+                return (false, validationErrors);
+            }
+            
+            // Check for required seedData section
+            if (!root.TryGetProperty("seedData", out var seedData))
+            {
+                validationErrors.Add("Missing required 'seedData' section");
+                return (false, validationErrors);
+            }
+            
+            // Validate seedData is an object
+            if (seedData.ValueKind != JsonValueKind.Object)
+            {
+                validationErrors.Add("The 'seedData' section must be a JSON object");
+                return (false, validationErrors);
+            }
+            
+            return (true, validationErrors);
+        }
+        catch (JsonException jsonEx)
+        {
+            validationErrors.Add($"Invalid JSON syntax: {jsonEx.Message}");
+            return (false, validationErrors);
+        }
+        catch (Exception ex)
+        {
+            validationErrors.Add($"File read error: {ex.Message}");
+            return (false, validationErrors);
+        }
+    }
+
+    /// <summary>
+    /// Shows a progress bar for the current operation
+    /// </summary>
+    /// <param name="current">Current item number</param>
+    /// <param name="total">Total number of items</param>
+    /// <param name="containerName">Name of the container being processed</param>
+    private static void ShowProgress(int current, int total, string containerName)
+    {
+        int barWidth = 40;
+        double percent = (double)current / total;
+        int pos = (int)(barWidth * percent);
+        Console.Write("[" + new string('#', pos) + new string('-', barWidth - pos) + $"] {current}/{total} ({containerName})\r");
     }
 }
 
