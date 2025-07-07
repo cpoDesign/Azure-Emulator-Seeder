@@ -54,86 +54,101 @@ public class SeederService
             httpClient.BaseAddress = new Uri(Program.EmulatorEndpoint);
             var dbCreated = await Program.CreateDatabaseIfNotExistsAsync(httpClient, dbName);
             _logger.LogInformation(dbCreated ? "Database '{Db}' created." : "Database '{Db}' already exists.", dbName);
+            
             var jsonFiles = Directory.GetFiles(dbDir, "*.json");
             if (jsonFiles.Length == 0)
             {
                 _logger.LogWarning("No .json files found in {DbDir}.", dbDir);
                 continue;
             }
-            var containerName = dbName; // Use dbName as container name
+
+            // Group documents by container name (from JSON or default to dbName)
+            var containerGroups = await GroupDocumentsByContainer(jsonFiles, dbName);
             
-            // Analyze if any documents need partition keys
-            bool needsPartitionKey = await DoesContainerNeedPartitionKey(jsonFiles);
-            string partitionStrategy = needsPartitionKey ? "with explicit partition keys" : "using document ID as partition key";
-            _logger.LogInformation("Container '{Container}' will be created {PartitionKeyStatus}", 
-                containerName, partitionStrategy);
-            
-            if (dropAndCreate)
+            foreach (var containerGroup in containerGroups)
             {
-                _logger.LogInformation("Dropping and recreating container '{Container}' in database '{Db}'...", containerName, dbName);
-                await Program.DropAndCreateContainerBatchAsync(httpClient, dbName, containerName, needsPartitionKey);
-            }
-            else
-            {
-                await Program.CreateContainerIfNotExistsAsync(httpClient, dbName, containerName, needsPartitionKey);
-            }
-            var inserter = new CosmosDbInserter(httpClient, dbName, containerName);
-            int successCount = 0;
-            int failCount = 0;
-            int total = jsonFiles.Length;
-            int current = 0;
-            foreach (var file in jsonFiles)
-            {
-                try
+                var containerName = containerGroup.Key;
+                var files = containerGroup.Value;
+                
+                _logger.LogInformation("Processing container '{Container}' with {FileCount} documents", containerName, files.Count);
+                
+                // Analyze if any documents in this container need partition keys
+                bool needsPartitionKey = await DoesContainerNeedPartitionKey(files.ToArray());
+                string partitionStrategy = needsPartitionKey ? "with explicit partition keys" : "using document ID as partition key";
+                _logger.LogInformation("Container '{Container}' will be created {PartitionKeyStatus}", 
+                    containerName, partitionStrategy);
+                
+                if (dropAndCreate)
                 {
-                    var fileContent = await File.ReadAllTextAsync(file);
-                    using var doc = JsonDocument.Parse(fileContent);
-                    var root = doc.RootElement;
-                    var seedConfig = root.GetProperty("seedConfig");
-                    var id = seedConfig.GetProperty("id").GetString() ?? throw new Exception("Missing id in seedConfig");
-                    
-                    // Make partition key optional - can be null or empty for documents without partitioning
-                    string? pk = null;
-                    if (seedConfig.TryGetProperty("pk", out var pkProperty))
+                    _logger.LogInformation("Dropping and recreating container '{Container}' in database '{Db}'...", containerName, dbName);
+                    await Program.DropAndCreateContainerBatchAsync(httpClient, dbName, containerName, needsPartitionKey);
+                }
+                else
+                {
+                    await Program.CreateContainerIfNotExistsAsync(httpClient, dbName, containerName, needsPartitionKey);
+                }
+                
+                var inserter = new CosmosDbInserter(httpClient, dbName, containerName);
+                int successCount = 0;
+                int failCount = 0;
+                int total = files.Count;
+                int current = 0;
+                
+                foreach (var file in files)
+                {
+                    try
                     {
-                        pk = pkProperty.GetString();
-                        // Treat empty string as null for partition key
-                        if (string.IsNullOrEmpty(pk))
+                        var fileContent = await File.ReadAllTextAsync(file);
+                        using var doc = JsonDocument.Parse(fileContent);
+                        var root = doc.RootElement;
+                        var seedConfig = root.GetProperty("seedConfig");
+                        var id = seedConfig.GetProperty("id").GetString() ?? throw new Exception("Missing id in seedConfig");
+                        
+                        // Make partition key optional - can be null or empty for documents without partitioning
+                        string? pk = null;
+                        if (seedConfig.TryGetProperty("pk", out var pkProperty))
                         {
-                            pk = null;
+                            pk = pkProperty.GetString();
+                            // Treat empty string as null for partition key
+                            if (string.IsNullOrEmpty(pk))
+                            {
+                                pk = null;
+                            }
+                        }
+                        
+                        var seedData = root.GetProperty("seedData").GetRawText();
+                        var pkDisplay = pk ?? "none";
+                        _logger.LogInformation("Attempting to insert file: {File} into container '{Container}' (PK: {PK})", 
+                            Path.GetFileName(file), containerName, pkDisplay);
+                        _logger.LogDebug("File content: {Content}", seedData);
+                        var result = await inserter.UpsertDocumentAsync(id, pk, seedData);
+                        if (result)
+                        {
+                            _logger.LogInformation("Seeded: {File}", Path.GetFileName(file));
+                            successCount++;
+                        }
+                        else
+                        {
+                            _logger.LogError("Failed: {File}", Path.GetFileName(file));
+                            failCount++;
                         }
                     }
-                    
-                    var seedData = root.GetProperty("seedData").GetRawText();
-                    var pkDisplay = pk ?? "none";
-                    _logger.LogInformation("Attempting to insert file: {File} (PK: {PK})", file, pkDisplay);
-                    _logger.LogDebug("File content: {Content}", seedData);
-                    var result = await inserter.UpsertDocumentAsync(id, pk, seedData);
-                    if (result)
+                    catch (Exception ex)
                     {
-                        _logger.LogInformation("Seeded: {File}", file);
-                        successCount++;
-                    }
-                    else
-                    {
-                        _logger.LogError("Failed: {File}", file);
+                        _logger.LogError(ex, "Exception while processing file: {File}", file);
                         failCount++;
                     }
+                    current++;
+                    // Progress bar
+                    int barWidth = 40;
+                    double percent = (double)current / total;
+                    int pos = (int)(barWidth * percent);
+                    Console.Write("[" + new string('#', pos) + new string('-', barWidth - pos) + $"] {current}/{total} ({containerName})\r");
                 }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Exception while processing file: {File}", file);
-                    failCount++;
-                }
-                current++;
-                // Progress bar
-                int barWidth = 40;
-                double percent = (double)current / total;
-                int pos = (int)(barWidth * percent);
-                Console.Write("[" + new string('#', pos) + new string('-', barWidth - pos) + $"] {current}/{total} ({dbName})\r");
+                Console.WriteLine();
+                _logger.LogInformation("Seeding complete for container '{Container}' in database '{DbName}'. Success: {Success}, Failed: {Failed}, Total: {Total}", 
+                    containerName, dbName, successCount, failCount, total);
             }
-            Console.WriteLine();
-            _logger.LogInformation("Seeding complete for {DbName}. Success: {Success}, Failed: {Failed}, Total: {Total}", dbName, successCount, failCount, total);
         }
     }
 
@@ -187,6 +202,61 @@ public class SeederService
         }
         
         return false; // No documents have explicit partition keys - all will use document ID as partition key
+    }
+
+    /// <summary>
+    /// Groups documents by their container name, extracting from JSON or using default database name
+    /// </summary>
+    /// <param name="jsonFiles">Array of JSON file paths to analyze</param>
+    /// <param name="defaultContainerName">Default container name to use if not specified in JSON</param>
+    /// <returns>Dictionary where key is container name and value is list of file paths</returns>
+    private async Task<Dictionary<string, List<string>>> GroupDocumentsByContainer(string[] jsonFiles, string defaultContainerName)
+    {
+        var containerGroups = new Dictionary<string, List<string>>();
+        
+        foreach (var file in jsonFiles)
+        {
+            try
+            {
+                var fileContent = await File.ReadAllTextAsync(file);
+                using var doc = JsonDocument.Parse(fileContent);
+                var root = doc.RootElement;
+                var seedConfig = root.GetProperty("seedConfig");
+                
+                // Extract container name from JSON or use default
+                string containerName = defaultContainerName;
+                if (seedConfig.TryGetProperty("container", out var containerProperty))
+                {
+                    var customContainer = containerProperty.GetString();
+                    if (!string.IsNullOrEmpty(customContainer))
+                    {
+                        containerName = customContainer;
+                        _logger.LogInformation("File {File} specifies custom container: '{Container}'", 
+                            Path.GetFileName(file), containerName);
+                    }
+                }
+                
+                // Add file to the appropriate container group
+                if (!containerGroups.ContainsKey(containerName))
+                {
+                    containerGroups[containerName] = new List<string>();
+                }
+                containerGroups[containerName].Add(file);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Could not parse file {File} for container grouping: {Error}. Using default container.", 
+                    Path.GetFileName(file), ex.Message);
+                // Use default container for files that can't be parsed
+                if (!containerGroups.ContainsKey(defaultContainerName))
+                {
+                    containerGroups[defaultContainerName] = new List<string>();
+                }
+                containerGroups[defaultContainerName].Add(file);
+            }
+        }
+        
+        return containerGroups;
     }
 }
 

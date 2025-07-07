@@ -2,7 +2,7 @@
   "seedConfig": {
     "id": "no-pk-example-001",
     "db": "Order",
-    "container": "Orders"
+    "container": "OrderContainer"
   },
   "seedData": {
     "id": "no-pk-example-001",
