@@ -1,7 +1,7 @@
 {
-    "defintion": {
-        "queueName": "queue.1"
-    },
+  "definition": {
+    "queueName": "queue.1"
+  },
   "msgCustomProperties": {
     "customProperty1": "value1",
     "customProperty2": "value2"
