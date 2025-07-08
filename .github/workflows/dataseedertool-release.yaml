@@ -43,7 +43,7 @@ jobs:
         run: dotnet build src/DataSeeder.sln --configuration Release --no-restore
 
       - name: Run Unit Tests
-        run: dotnet test src/DataSeeder.sln --configuration Release --no-build --verbosity
+        run: dotnet test src/DataSeeder.sln --configuration Release --no-build --verbosity normal
 
       - name: Publish Windows x64
         run: dotnet publish src/DataSeeder\DataSeeder.csproj --configuration Release --runtime win-x64 --self-contained true --output publish/win-x64
