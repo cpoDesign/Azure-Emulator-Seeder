@@ -37,16 +37,19 @@ jobs:
         run: mkdir -p publish
 
       - name: Restore dependencies
-        run: dotnet restore DataSeeder.sln
+        run: dotnet restore src/DataSeeder.sln
 
       - name: Build (Release)
-        run: dotnet build DataSeeder.sln --configuration Release --no-restore
+        run: dotnet build src/DataSeeder.sln --configuration Release --no-restore
+
+      - name: Run Unit Tests
+        run: dotnet test src/DataSeeder.sln --configuration Release --no-build --verbosity normal
 
       - name: Publish Windows x64
-        run: dotnet publish DataSeeder.csproj --configuration Release --runtime win-x64 --self-contained true --output publish/win-x64
+        run: dotnet publish src/DataSeeder/DataSeeder.csproj --configuration Release --runtime win-x64 --self-contained true --output publish/win-x64
 
       - name: Publish Linux x64
-        run: dotnet publish DataSeeder.csproj --configuration Release --runtime linux-x64 --self-contained true --output publish/linux-x64
+        run: dotnet publish src/DataSeeder/DataSeeder.csproj --configuration Release --runtime linux-x64 --self-contained true --output publish/linux-x64
 
       - name: Archive Windows artefact
         run: |

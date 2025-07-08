@@ -48,7 +48,7 @@ public static class ServiceBusSeeder
             Console.WriteLine("loading configuration");
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-            var def = root.GetProperty("definition");
+            var def = root.GetProperty("defintion");
             var name = string.Empty;
             if (isQueue)
             {
