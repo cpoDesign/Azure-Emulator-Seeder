@@ -245,7 +245,7 @@ SeedData/
 
 ```json
 {
-  "definition": {
+  "defintion": {
     "queueName": "orders.processing"
   },
   "msgCustomProperties": {
@@ -261,7 +261,7 @@ SeedData/
 
 ```json
 {
-  "definition": {
+  "defintion": {
     "topicName": "events.orders"
   },
   "msgCustomProperties": {
@@ -282,56 +282,15 @@ The seeder analyzes all JSON files in a database directory and groups them by co
 
 ### Example Output
 
-```text
-2025-07-07 23:45:10.111 info: DataSeeder.SeederService[0]
-      Processing container 'Orders' with 2 documents
-2025-07-07 23:45:10.112 info: DataSeeder.SeederService[0]
-      Container 'Orders' will be created with explicit partition keys
-2025-07-07 23:45:10.113 info: DataSeeder.SeederService[0]
-      Processing container 'OrderContainer' with 1 documents
-2025-07-07 23:45:10.114 info: DataSeeder.SeederService[0]
-      Container 'OrderContainer' will be created using document ID as partition key
-2025-07-07 23:45:11.389 info: DataSeeder.SeederService[0]
-      Attempting to insert file: order-001.json into container 'Orders' (PK: customer-123)
-2025-07-07 23:45:11.417 info: DataSeeder.SeederService[0]
-      Seeded: order-001.json
-[########################################] 1/1 (Orders)
-2025-07-07 23:45:11.418 info: DataSeeder.SeederService[0]
-      Seeding complete for container 'Orders' in database 'Orders'. Success: 1, Failed: 0, Total: 1
 ```
-
-**Note**: Files specifying custom container names are logged at DEBUG level. Enable debug logging to see per-file container assignments.
-
-## Technical Implementation Details
-
-### Container Creation Strategy
-
-- **Partition Key Path**: All containers use `/pk` as the partition key path, regardless of whether documents use explicit or document ID partitioning
-- **Container Readiness**: After creating containers, the system waits 1 second to ensure they are fully ready before inserting documents
-- **Error Handling**: Files that cannot be parsed are automatically assigned to the default container (database name)
-
-### Document Processing
-
-- **JSON Validation**: Each file undergoes strict validation before processing:
-  - **Syntax Check**: Validates proper JSON formatting and structure
-  - **Required Fields**: Ensures `seedConfig.id` and `seedData` sections exist
-  - **Structure Validation**: Confirms `seedData` is a valid JSON object
-  - **Early Failure Detection**: Invalid files are rejected before attempting database operations
-- **Analysis Phase**: The system analyzes all JSON files in a directory before processing to determine:
-  - Container grouping (custom vs. default containers)
-  - Partition key strategy per container (explicit vs. document ID)
-- **Progress Tracking**: Real-time progress bars show current file processing status per container
-- **Partition Key Assignment**:
-  - Documents with explicit `pk` field: Use the specified value
-  - Documents without `pk` field: Automatically use document ID as partition key
-  - Empty or null `pk` values are treated as "no explicit partition key"
-
-### Logging Levels
-
-- **INFO**: Container processing, database operations, document insertion results
-- **DEBUG**: Per-file container assignments, file content details
-- **WARNING**: Parse failures, missing files
-- **ERROR**: Critical failures, connection issues
+info: File example-withContainerName.json specifies custom container: 'OrderContainer'
+info: Processing container 'Orders' with 2 documents
+info: Container 'Orders' will be created with explicit partition keys
+info: Processing container 'OrderContainer' with 1 documents
+info: Container 'OrderContainer' will be created using document ID as partition key
+info: Successfully inserted document 'order-001' with explicit partition key (pk='customer-123') into container 'Orders'
+info: Successfully inserted document 'special-order' using document ID as partition key (pk='special-order') into container 'OrderContainer'
+```
 
 ## Configuration
 
@@ -455,55 +414,26 @@ dotnet run -- -t cosmos -p .\SeedData\AzureCosmosData --drop
    - Check JSON structure matches expected format
    - Use `--drop` flag to recreate containers with correct schema
 
-3. **JSON Structure Validation Issues**
-
-   - **Invalid JSON Syntax**: Check for proper JSON formatting (commas, brackets, quotes)
-   - **Missing Required Fields**: Ensure `seedConfig.id` and `seedData` sections exist
-   - **Empty Files**: Files cannot be empty or contain only whitespace
-   - **Malformed Structure**: `seedData` must be a valid JSON object
-
-   **Example Error Messages**:
-   
-   ```text
-   2025-07-08 00:00:51.722 fail: DataSeeder.SeederService[0]
-         Invalid JSON structure in file 'invalid-file.json': Invalid JSON syntax: '/' is invalid after a value
-   2025-07-08 00:00:51.722 fail: DataSeeder.SeederService[0]
-         Invalid JSON structure in file 'missing-id.json': Missing required 'id' field in seedConfig
-   ```
-
-4. **Container Name Issues**
+3. **Container Name Issues**
 
    - Ensure custom container names are valid Cosmos DB identifiers
    - Container names are case-sensitive
    - Check that JSON structure includes proper `seedConfig` section
 
-5. **Service Bus Connection Issues**
+4. **Service Bus Connection Issues**
    - Verify `servicebus-config.json` configuration
    - Ensure Service Bus emulator or Azure namespace is accessible
    - Check connection string format
 
 ### Logging
 
-The application provides detailed logging with timestamps including:
+The application provides detailed logging including:
 
 - Container grouping and creation strategy
 - Document insertion results with container targeting
 - Partition key assignments
 - Custom container name detection
 - Error details with context
-
-**Log Format**: Each log entry includes a timestamp in the format `yyyy-MM-dd HH:mm:ss.fff` followed by the log level and message.
-
-**Example Log Output**:
-
-```text
-2025-07-07 23:41:20.512 info: DataSeeder.SeederService[0]
-      Seeding database: Orders
-2025-07-07 23:41:20.650 info: DataSeeder.SeederService[0]
-      Processing container 'Orders' with 2 documents
-2025-07-07 23:41:20.651 info: DataSeeder.SeederService[0]
-      Container 'Orders' will be created with explicit partition keys
-```
 
 Enable verbose logging by setting the log level in your environment or application configuration.
 

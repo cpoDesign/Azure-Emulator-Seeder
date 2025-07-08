@@ -40,29 +40,38 @@ public class SeederService
                 _logger.LogWarning("No .json files found in {DbDir}.", dbDir);
                 continue;
             }
-            var containerName = dbName; // Use dbName as container name
             
-            // Analyze if any documents need partition keys
-            bool needsPartitionKey = await DoesContainerNeedPartitionKey(jsonFiles);
-            string partitionStrategy = needsPartitionKey ? "with explicit partition keys" : "using document ID as partition key";
-            _logger.LogInformation("Container '{Container}' will be created {PartitionKeyStatus}", 
-                containerName, partitionStrategy);
+            // Group files by container name
+            var filesByContainer = await GroupFilesByContainer(jsonFiles, dbName);
             
-            if (dropAndCreate)
+            foreach (var containerGroup in filesByContainer)
             {
-                _logger.LogInformation("Dropping and recreating container '{Container}' in database '{Db}'...", containerName, dbName);
-                await Program.DropAndCreateContainerBatchAsync(httpClient, dbName, containerName, needsPartitionKey);
-            }
-            else
-            {
-                await Program.CreateContainerIfNotExistsAsync(httpClient, dbName, containerName, needsPartitionKey);
-            }
-            var inserter = new CosmosDbInserter(httpClient, dbName, containerName);
-            int successCount = 0;
-            int failCount = 0;
-            int total = jsonFiles.Length;
-            int current = 0;
-            foreach (var file in jsonFiles)
+                var containerName = containerGroup.Key;
+                var containerFiles = containerGroup.Value;
+                
+                // Analyze if any documents need partition keys
+                bool needsPartitionKey = await DoesContainerNeedPartitionKey(containerFiles);
+                string partitionStrategy = needsPartitionKey ? "with explicit partition keys" : "using document ID as partition key";
+                _logger.LogInformation("Container '{Container}' will be created {PartitionKeyStatus}", 
+                    containerName, partitionStrategy);
+                
+                if (dropAndCreate)
+                {
+                    _logger.LogInformation("Dropping and recreating container '{Container}' in database '{Db}'...", containerName, dbName);
+                    await Program.DropAndCreateContainerBatchAsync(httpClient, dbName, containerName, needsPartitionKey);
+                }
+                else
+                {
+                    await Program.CreateContainerIfNotExistsAsync(httpClient, dbName, containerName, needsPartitionKey);
+                }
+                
+                var inserter = new CosmosDbInserter(httpClient, dbName, containerName);
+                int successCount = 0;
+                int failCount = 0;
+                int total = containerFiles.Length;
+                int current = 0;
+                
+                foreach (var file in containerFiles)
             {
                 try
                 {
@@ -110,10 +119,12 @@ public class SeederService
                 int barWidth = 40;
                 double percent = (double)current / total;
                 int pos = (int)(barWidth * percent);
-                Console.Write("[" + new string('#', pos) + new string('-', barWidth - pos) + $"] {current}/{total} ({dbName})\r");
+                Console.Write("[" + new string('#', pos) + new string('-', barWidth - pos) + $"] {current}/{total} ({containerName})\r");
             }
             Console.WriteLine();
-            _logger.LogInformation("Seeding complete for {DbName}. Success: {Success}, Failed: {Failed}, Total: {Total}", dbName, successCount, failCount, total);
+            _logger.LogInformation("Seeding complete for container '{Container}' in database '{DbName}'. Success: {Success}, Failed: {Failed}, Total: {Total}", 
+                containerName, dbName, successCount, failCount, total);
+            }
         }
     }
 
@@ -167,5 +178,56 @@ public class SeederService
         }
         
         return false; // No documents have explicit partition keys - all will use document ID as partition key
+    }
+
+    /// <summary>
+    /// Groups JSON files by their container name as specified in seedConfig, 
+    /// falling back to database name if container is not specified
+    /// </summary>
+    /// <param name="jsonFiles">Array of JSON file paths to group</param>
+    /// <param name="fallbackContainerName">Default container name to use if not specified in file</param>
+    /// <returns>Dictionary mapping container names to arrays of file paths</returns>
+    internal async Task<Dictionary<string, string[]>> GroupFilesByContainer(string[] jsonFiles, string fallbackContainerName)
+    {
+        var containerGroups = new Dictionary<string, List<string>>();
+        
+        foreach (var file in jsonFiles)
+        {
+            string containerName = fallbackContainerName; // Default to database name
+            
+            try
+            {
+                var fileContent = await File.ReadAllTextAsync(file);
+                using var doc = JsonDocument.Parse(fileContent);
+                var root = doc.RootElement;
+                var seedConfig = root.GetProperty("seedConfig");
+                
+                // Check if this document specifies a container name
+                if (seedConfig.TryGetProperty("container", out var containerProperty))
+                {
+                    var specifiedContainer = containerProperty.GetString();
+                    if (!string.IsNullOrEmpty(specifiedContainer))
+                    {
+                        containerName = specifiedContainer;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Could not parse file {File} for container name detection, using fallback '{Container}': {Error}", 
+                    file, fallbackContainerName, ex.Message);
+                // Use fallback container name for files that can't be parsed
+            }
+            
+            // Add file to the appropriate container group
+            if (!containerGroups.ContainsKey(containerName))
+            {
+                containerGroups[containerName] = new List<string>();
+            }
+            containerGroups[containerName].Add(file);
+        }
+        
+        // Convert to dictionary with arrays
+        return containerGroups.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToArray());
     }
 }
