@@ -40,6 +40,7 @@ public class SeederService
                 _logger.LogWarning("No .json files found in {DbDir}.", dbDir);
                 continue;
             }
+            var containerName = dbName; // Use dbName as container name
             
             // Group files by container name
             var filesByContainer = await GroupFilesByContainer(jsonFiles, dbName);
@@ -49,27 +50,27 @@ public class SeederService
                 var containerName = containerGroup.Key;
                 var containerFiles = containerGroup.Value;
                 
-                // Analyze if any documents need partition keys
+            // Analyze if any documents need partition keys
                 bool needsPartitionKey = await DoesContainerNeedPartitionKey(containerFiles);
-                string partitionStrategy = needsPartitionKey ? "with explicit partition keys" : "using document ID as partition key";
-                _logger.LogInformation("Container '{Container}' will be created {PartitionKeyStatus}", 
-                    containerName, partitionStrategy);
+            string partitionStrategy = needsPartitionKey ? "with explicit partition keys" : "using document ID as partition key";
+            _logger.LogInformation("Container '{Container}' will be created {PartitionKeyStatus}", 
+                containerName, partitionStrategy);
+            
+            if (dropAndCreate)
+            {
+                _logger.LogInformation("Dropping and recreating container '{Container}' in database '{Db}'...", containerName, dbName);
+                await Program.DropAndCreateContainerBatchAsync(httpClient, dbName, containerName, needsPartitionKey);
+            }
+            else
+            {
+                await Program.CreateContainerIfNotExistsAsync(httpClient, dbName, containerName, needsPartitionKey);
+            }
                 
-                if (dropAndCreate)
-                {
-                    _logger.LogInformation("Dropping and recreating container '{Container}' in database '{Db}'...", containerName, dbName);
-                    await Program.DropAndCreateContainerBatchAsync(httpClient, dbName, containerName, needsPartitionKey);
-                }
-                else
-                {
-                    await Program.CreateContainerIfNotExistsAsync(httpClient, dbName, containerName, needsPartitionKey);
-                }
-                
-                var inserter = new CosmosDbInserter(httpClient, dbName, containerName);
-                int successCount = 0;
-                int failCount = 0;
+            var inserter = new CosmosDbInserter(httpClient, dbName, containerName);
+            int successCount = 0;
+            int failCount = 0;
                 int total = containerFiles.Length;
-                int current = 0;
+            int current = 0;
                 
                 foreach (var file in containerFiles)
             {
@@ -124,8 +125,8 @@ public class SeederService
             Console.WriteLine();
             _logger.LogInformation("Seeding complete for container '{Container}' in database '{DbName}'. Success: {Success}, Failed: {Failed}, Total: {Total}", 
                 containerName, dbName, successCount, failCount, total);
-            }
         }
+    }
     }
 
     /// <summary>
