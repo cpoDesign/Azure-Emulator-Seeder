@@ -14,6 +14,16 @@ on:
     branches:
       - "**"
   workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: false
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
@@ -71,16 +81,33 @@ jobs:
           set -euo pipefail
           echo "tag=$(git describe --tags --abbrev=0 || echo v0.0.0)" >> $GITHUB_OUTPUT
 
-      - name: Get next version (semantic, auto-increment patch)
+      - name: Get next version (semantic, auto-increment)
         id: next_version
         run: |
           set -euo pipefail
           last_tag=${{ steps.get_tag.outputs.tag }}
+          version_bump="${{ github.event.inputs.version_bump || 'patch' }}"
+          
           if [[ "$last_tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
             major=${BASH_REMATCH[1]}
             minor=${BASH_REMATCH[2]}
             patch=${BASH_REMATCH[3]}
-            patch=$((patch+1))
+            
+            case "$version_bump" in
+              "major")
+                major=$((major+1))
+                minor=0
+                patch=0
+                ;;
+              "minor")
+                minor=$((minor+1))
+                patch=0
+                ;;
+              "patch")
+                patch=$((patch+1))
+                ;;
+            esac
+            
             echo "version=v$major.$minor.$patch" >> $GITHUB_OUTPUT
           else
             echo "version=v0.0.1" >> $GITHUB_OUTPUT

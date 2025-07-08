@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Polly;
 
 namespace DataSeeder;
 
@@ -11,7 +12,7 @@ public class SeederService
         _logger = logger;
     }
 
-    public async Task RunAsync(string parentPath, bool dropAndCreate = false)
+    public async Task RunAsync(string parentPath, bool dropAndCreate = false, string? targetDatabase = null)
     {
         if (!Directory.Exists(parentPath))
         {
@@ -27,6 +28,14 @@ public class SeederService
         foreach (var dbDir in dbDirs)
         {
             var dbName = Path.GetFileName(dbDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            
+            // Skip databases that don't match the target database filter
+            if (!string.IsNullOrEmpty(targetDatabase) && !dbName.Equals(targetDatabase, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Skipping database: {DbName} (not matching target: {TargetDatabase})", dbName, targetDatabase);
+                continue;
+            }
+            
             _logger.LogInformation("Seeding database: {DbName}", dbName);
             using var httpClient = new HttpClient(new HttpClientHandler {
                 ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
@@ -40,29 +49,30 @@ public class SeederService
                 _logger.LogWarning("No .json files found in {DbDir}.", dbDir);
                 continue;
             }
-            var containerName = dbName; // Use dbName as container name
             
+            // Group files by container name
+            var filesByContainer = await GroupFilesByContainer(jsonFiles, dbName);
+            
+            foreach (var containerGroup in filesByContainer)
+            {
+                var containerName = containerGroup.Key;
+                var containerFiles = containerGroup.Value;
+                
             // Analyze if any documents need partition keys
-            bool needsPartitionKey = await DoesContainerNeedPartitionKey(jsonFiles);
+                bool needsPartitionKey = await DoesContainerNeedPartitionKey(containerFiles);
             string partitionStrategy = needsPartitionKey ? "with explicit partition keys" : "using document ID as partition key";
             _logger.LogInformation("Container '{Container}' will be created {PartitionKeyStatus}", 
                 containerName, partitionStrategy);
             
-            if (dropAndCreate)
-            {
-                _logger.LogInformation("Dropping and recreating container '{Container}' in database '{Db}'...", containerName, dbName);
-                await Program.DropAndCreateContainerBatchAsync(httpClient, dbName, containerName, needsPartitionKey);
-            }
-            else
-            {
-                await Program.CreateContainerIfNotExistsAsync(httpClient, dbName, containerName, needsPartitionKey);
-            }
+            await CreateContainerWithRetryAsync(httpClient, dbName, containerName, needsPartitionKey, dropAndCreate);
+                
             var inserter = new CosmosDbInserter(httpClient, dbName, containerName);
             int successCount = 0;
             int failCount = 0;
-            int total = jsonFiles.Length;
+                int total = containerFiles.Length;
             int current = 0;
-            foreach (var file in jsonFiles)
+                
+                foreach (var file in containerFiles)
             {
                 try
                 {
@@ -88,7 +98,12 @@ public class SeederService
                     var pkDisplay = pk ?? "none";
                     _logger.LogInformation("Attempting to insert file: {File} (PK: {PK})", file, pkDisplay);
                     _logger.LogDebug("File content: {Content}", seedData);
-                    var result = await inserter.UpsertDocumentAsync(id, pk, seedData);
+                    
+                    // Use retry policy for document insertion
+                    var retryPolicy = CreateCosmosRetryPolicy();
+                    var result = await retryPolicy.ExecuteAsync(async _ => 
+                        await inserter.UpsertDocumentAsync(id, pk, seedData));
+                    
                     if (result)
                     {
                         _logger.LogInformation("Seeded: {File}", file);
@@ -110,11 +125,13 @@ public class SeederService
                 int barWidth = 40;
                 double percent = (double)current / total;
                 int pos = (int)(barWidth * percent);
-                Console.Write("[" + new string('#', pos) + new string('-', barWidth - pos) + $"] {current}/{total} ({dbName})\r");
+                Console.Write("[" + new string('#', pos) + new string('-', barWidth - pos) + $"] {current}/{total} ({containerName})\r");
             }
             Console.WriteLine();
-            _logger.LogInformation("Seeding complete for {DbName}. Success: {Success}, Failed: {Failed}, Total: {Total}", dbName, successCount, failCount, total);
+            _logger.LogInformation("Seeding complete for container '{Container}' in database '{DbName}'. Success: {Success}, Failed: {Failed}, Total: {Total}", 
+                containerName, dbName, successCount, failCount, total);
         }
+    }
     }
 
     /// <summary>
@@ -167,5 +184,100 @@ public class SeederService
         }
         
         return false; // No documents have explicit partition keys - all will use document ID as partition key
+    }
+
+    /// <summary>
+    /// Groups JSON files by their container name as specified in seedConfig, 
+    /// falling back to database name if container is not specified
+    /// </summary>
+    /// <param name="jsonFiles">Array of JSON file paths to group</param>
+    /// <param name="fallbackContainerName">Default container name to use if not specified in file</param>
+    /// <returns>Dictionary mapping container names to arrays of file paths</returns>
+    internal async Task<Dictionary<string, string[]>> GroupFilesByContainer(string[] jsonFiles, string fallbackContainerName)
+    {
+        var containerGroups = new Dictionary<string, List<string>>();
+        
+        foreach (var file in jsonFiles)
+        {
+            string containerName = fallbackContainerName; // Default to database name
+            
+            try
+            {
+                var fileContent = await File.ReadAllTextAsync(file);
+                using var doc = JsonDocument.Parse(fileContent);
+                var root = doc.RootElement;
+                var seedConfig = root.GetProperty("seedConfig");
+                
+                // Check if this document specifies a container name
+                if (seedConfig.TryGetProperty("container", out var containerProperty))
+                {
+                    var specifiedContainer = containerProperty.GetString();
+                    if (!string.IsNullOrEmpty(specifiedContainer))
+                    {
+                        containerName = specifiedContainer;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("Could not parse file {File} for container name detection, using fallback '{Container}': {Error}", 
+                    file, fallbackContainerName, ex.Message);
+                // Use fallback container name for files that can't be parsed
+            }
+            
+            // Add file to the appropriate container group
+            if (!containerGroups.ContainsKey(containerName))
+            {
+                containerGroups[containerName] = new List<string>();
+            }
+            containerGroups[containerName].Add(file);
+        }
+        
+        // Convert to dictionary with arrays
+        return containerGroups.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToArray());
+    }
+
+    /// <summary>
+    /// Creates a retry policy for Cosmos DB operations with exponential backoff
+    /// </summary>
+    /// <returns>A resilience pipeline for retrying operations</returns>
+    private ResiliencePipeline CreateCosmosRetryPolicy()
+    {
+        return new ResiliencePipelineBuilder()
+            .AddRetry(new Polly.Retry.RetryStrategyOptions
+            {
+                MaxRetryAttempts = 3,
+                DelayGenerator = static args => ValueTask.FromResult(
+                    (TimeSpan?)TimeSpan.FromMilliseconds(Math.Pow(2, args.AttemptNumber) * 500) // 500ms, 1s, 2s
+                ),
+                OnRetry = args =>
+                {
+                    _logger.LogWarning("Retrying Cosmos DB operation (attempt {AttemptNumber}/{MaxAttempts}) after {Delay}ms due to: {Exception}", 
+                        args.AttemptNumber, 3, args.RetryDelay.TotalMilliseconds, args.Outcome.Exception?.Message ?? "Unknown error");
+                    return ValueTask.CompletedTask;
+                }
+            })
+            .Build();
+    }
+
+    /// <summary>
+    /// Executes container creation with retry policy to handle emulator timing issues
+    /// </summary>
+    private async Task CreateContainerWithRetryAsync(HttpClient httpClient, string dbName, string containerName, bool needsPartitionKey, bool dropAndCreate)
+    {
+        var retryPolicy = CreateCosmosRetryPolicy();
+        
+        await retryPolicy.ExecuteAsync(async _ =>
+        {
+            if (dropAndCreate)
+            {
+                _logger.LogInformation("Dropping and recreating container '{Container}' in database '{Db}'...", containerName, dbName);
+                await Program.DropAndCreateContainerBatchAsync(httpClient, dbName, containerName, needsPartitionKey);
+            }
+            else
+            {
+                await Program.CreateContainerIfNotExistsAsync(httpClient, dbName, containerName, needsPartitionKey);
+            }
+        });
     }
 }
