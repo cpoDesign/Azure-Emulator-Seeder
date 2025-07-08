@@ -245,7 +245,7 @@ SeedData/
 
 ```json
 {
-  "defintion": {
+  "definition": {
     "queueName": "orders.processing"
   },
   "msgCustomProperties": {
@@ -261,7 +261,7 @@ SeedData/
 
 ```json
 {
-  "defintion": {
+  "definition": {
     "topicName": "events.orders"
   },
   "msgCustomProperties": {

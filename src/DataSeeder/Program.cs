@@ -28,7 +28,8 @@ class Program
             {
                 case "cosmos":
                     var seeder = provider.GetRequiredService<SeederService>();
-                    await seeder.RunAsync(options.Path, options.DropAndCreate);
+                    var targetDatabase = string.IsNullOrEmpty(options.Database) ? null : options.Database;
+                    await seeder.RunAsync(options.Path, options.DropAndCreate, targetDatabase);
                     break;
                 case "servicebus":
                     await ServiceBusSeeder.RunAsync(options.Path, logger);

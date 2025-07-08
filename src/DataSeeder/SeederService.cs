@@ -1,5 +1,6 @@
 ﻿using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Polly;
 
 namespace DataSeeder;
 
@@ -11,7 +12,7 @@ public class SeederService
         _logger = logger;
     }
 
-    public async Task RunAsync(string parentPath, bool dropAndCreate = false)
+    public async Task RunAsync(string parentPath, bool dropAndCreate = false, string? targetDatabase = null)
     {
         if (!Directory.Exists(parentPath))
         {
@@ -27,6 +28,14 @@ public class SeederService
         foreach (var dbDir in dbDirs)
         {
             var dbName = Path.GetFileName(dbDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+            
+            // Skip databases that don't match the target database filter
+            if (!string.IsNullOrEmpty(targetDatabase) && !dbName.Equals(targetDatabase, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogInformation("Skipping database: {DbName} (not matching target: {TargetDatabase})", dbName, targetDatabase);
+                continue;
+            }
+            
             _logger.LogInformation("Seeding database: {DbName}", dbName);
             using var httpClient = new HttpClient(new HttpClientHandler {
                 ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
@@ -40,7 +49,6 @@ public class SeederService
                 _logger.LogWarning("No .json files found in {DbDir}.", dbDir);
                 continue;
             }
-            var containerName = dbName; // Use dbName as container name
             
             // Group files by container name
             var filesByContainer = await GroupFilesByContainer(jsonFiles, dbName);
@@ -56,15 +64,7 @@ public class SeederService
             _logger.LogInformation("Container '{Container}' will be created {PartitionKeyStatus}", 
                 containerName, partitionStrategy);
             
-            if (dropAndCreate)
-            {
-                _logger.LogInformation("Dropping and recreating container '{Container}' in database '{Db}'...", containerName, dbName);
-                await Program.DropAndCreateContainerBatchAsync(httpClient, dbName, containerName, needsPartitionKey);
-            }
-            else
-            {
-                await Program.CreateContainerIfNotExistsAsync(httpClient, dbName, containerName, needsPartitionKey);
-            }
+            await CreateContainerWithRetryAsync(httpClient, dbName, containerName, needsPartitionKey, dropAndCreate);
                 
             var inserter = new CosmosDbInserter(httpClient, dbName, containerName);
             int successCount = 0;
@@ -98,7 +98,12 @@ public class SeederService
                     var pkDisplay = pk ?? "none";
                     _logger.LogInformation("Attempting to insert file: {File} (PK: {PK})", file, pkDisplay);
                     _logger.LogDebug("File content: {Content}", seedData);
-                    var result = await inserter.UpsertDocumentAsync(id, pk, seedData);
+                    
+                    // Use retry policy for document insertion
+                    var retryPolicy = CreateCosmosRetryPolicy();
+                    var result = await retryPolicy.ExecuteAsync(async _ => 
+                        await inserter.UpsertDocumentAsync(id, pk, seedData));
+                    
                     if (result)
                     {
                         _logger.LogInformation("Seeded: {File}", file);
@@ -230,5 +235,49 @@ public class SeederService
         
         // Convert to dictionary with arrays
         return containerGroups.ToDictionary(kvp => kvp.Key, kvp => kvp.Value.ToArray());
+    }
+
+    /// <summary>
+    /// Creates a retry policy for Cosmos DB operations with exponential backoff
+    /// </summary>
+    /// <returns>A resilience pipeline for retrying operations</returns>
+    private ResiliencePipeline CreateCosmosRetryPolicy()
+    {
+        return new ResiliencePipelineBuilder()
+            .AddRetry(new Polly.Retry.RetryStrategyOptions
+            {
+                MaxRetryAttempts = 3,
+                DelayGenerator = static args => ValueTask.FromResult(
+                    (TimeSpan?)TimeSpan.FromMilliseconds(Math.Pow(2, args.AttemptNumber) * 500) // 500ms, 1s, 2s
+                ),
+                OnRetry = args =>
+                {
+                    _logger.LogWarning("Retrying Cosmos DB operation (attempt {AttemptNumber}/{MaxAttempts}) after {Delay}ms due to: {Exception}", 
+                        args.AttemptNumber, 3, args.RetryDelay.TotalMilliseconds, args.Outcome.Exception?.Message ?? "Unknown error");
+                    return ValueTask.CompletedTask;
+                }
+            })
+            .Build();
+    }
+
+    /// <summary>
+    /// Executes container creation with retry policy to handle emulator timing issues
+    /// </summary>
+    private async Task CreateContainerWithRetryAsync(HttpClient httpClient, string dbName, string containerName, bool needsPartitionKey, bool dropAndCreate)
+    {
+        var retryPolicy = CreateCosmosRetryPolicy();
+        
+        await retryPolicy.ExecuteAsync(async _ =>
+        {
+            if (dropAndCreate)
+            {
+                _logger.LogInformation("Dropping and recreating container '{Container}' in database '{Db}'...", containerName, dbName);
+                await Program.DropAndCreateContainerBatchAsync(httpClient, dbName, containerName, needsPartitionKey);
+            }
+            else
+            {
+                await Program.CreateContainerIfNotExistsAsync(httpClient, dbName, containerName, needsPartitionKey);
+            }
+        });
     }
 }
