@@ -6,10 +6,16 @@ A comprehensive utility for seeding data into Azure Cosmos DB and Azure Service 
 
 - **CosmosDbInserter.cs**: Populates Cosmos DB with intelligent partition key management
 - **ServiceBusSeeder.cs**: Sends messages to Azure Service Bus queues and topics
+- **CosmosDbExporter.cs**: Exports existing Cosmos DB data to JSON files with change detection
 - **Flexible Partition Keys**: Supports both explicit and automatic (document ID) partition key strategies
 - **Custom Container Names**: Override default container names using JSON configuration
 - **Drop and Recreate**: Optional container recreation for clean testing environments
 - **Mixed Data Support**: Handles containers with mixed partition key requirements
+- **Reverse Seeding**: Export data from existing Cosmos DB containers to JSON files
+- **RU Optimization**: Automatic RU consumption monitoring and throttling
+- **Progress Tracking**: Real-time progress reporting for large exports
+- **Change Detection**: Only updates files when document content has changed
+- **Partition Key Optimization**: Efficient retrieval using partition key-based queries
 
 ## Partition Key Strategy
 
@@ -136,7 +142,41 @@ DataSeeder.exe -t servicebus -p .\SeedData\ServiceBusData
 ./DataSeeder -t servicebus -p ./SeedData/ServiceBusData
 ```
 
+### Reverse Seeding (Export from Cosmos DB)
+
+#### Export from Emulator
+
+```bash
+# Export all containers from a database
+DataSeeder.exe -t cosmos -s cosmos -d Orders -p .\ExportedData
+
+# Export specific container
+DataSeeder.exe -t cosmos -s cosmos -d Orders --container OrderHistory -p .\ExportedData
+```
+
+#### Export from Azure Cosmos DB
+
+```bash
+# Using connection string
+DataSeeder.exe -t cosmos -s cosmos -d Orders -p .\ExportedData -c "AccountEndpoint=https://myaccount.documents.azure.com:443/;AccountKey=mykey=="
+
+# With custom settings
+DataSeeder.exe -t cosmos -s cosmos -d Orders -p .\ExportedData -c "AccountEndpoint=https://myaccount.documents.azure.com:443/;AccountKey=mykey==" --page-size 500 --max-ru 1000
+```
+
+#### Export with Change Detection
+
+```bash
+# Only updates files that have changed (default behavior)
+DataSeeder.exe -t cosmos -s cosmos -d Orders -p .\ExportedData
+
+# Force update all files
+DataSeeder.exe -t cosmos -s cosmos -d Orders -p .\ExportedData --force-update
+```
+
 ## Command Line Options
+
+### Forward Seeding (Files → Azure)
 
 | Option           | Required | Description                                        | Example                         |
 | ---------------- | -------- | -------------------------------------------------- | ------------------------------- |
@@ -144,6 +184,21 @@ DataSeeder.exe -t servicebus -p .\SeedData\ServiceBusData
 | -p, --path       | Yes      | Path to folder containing data or messages         | `-p .\SeedData\AzureCosmosData` |
 | --drop           | No       | Drop and recreate containers (Cosmos only)         | `--drop`                        |
 | -d, --db         | No       | Name of specific Cosmos DB database to seed        | `-d Orders`                     |
+
+### Reverse Seeding (Azure → Files)
+
+| Option                 | Required | Description                                                 | Example                            |
+| ---------------------- | -------- | ----------------------------------------------------------- | ---------------------------------- |
+| -t, --targetType       | Yes      | Must be `cosmos` for reverse seeding                        | `-t cosmos`                        |
+| -s, --sourceType       | Yes      | Must be `cosmos` for reverse seeding                        | `-s cosmos`                        |
+| -d, --db               | Yes      | Name of Cosmos DB database to export                        | `-d Orders`                        |
+| -p, --path             | Yes      | Output folder path for exported JSON files                  | `-p .\ExportedData`                |
+| -c, --connectionString | No       | Cosmos DB connection string (uses emulator if not provided) | `-c "AccountEndpoint=https://..."` |
+| --container            | No       | Specific container to export (exports all if not specified) | `--container OrderHistory`         |
+| --managed-identity     | No       | Use managed identity for authentication                     | `--managed-identity`               |
+| --page-size            | No       | Documents per page (default: 100, max: 1000)                | `--page-size 500`                  |
+| --max-ru               | No       | Maximum RU/s to consume (default: 400)                      | `--max-ru 1000`                    |
+| --force-update         | No       | Force update all files even if unchanged                    | `--force-update`                   |
 
 ## Data File Structure
 
@@ -291,6 +346,8 @@ info: Container 'OrderContainer' will be created using document ID as partition 
 info: Successfully inserted document 'order-001' with explicit partition key (pk='customer-123') into container 'Orders'
 info: Successfully inserted document 'special-order' using document ID as partition key (pk='special-order') into container 'OrderContainer'
 ```
+
+![Example of the output](documentation/Exection.png)
 
 ## Configuration
 

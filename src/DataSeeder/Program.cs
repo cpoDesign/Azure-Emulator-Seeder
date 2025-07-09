@@ -27,9 +27,19 @@ class Program
             switch (options.TargetType.ToLowerInvariant())
             {
                 case "cosmos":
-                    var seeder = provider.GetRequiredService<SeederService>();
-                    var targetDatabase = string.IsNullOrEmpty(options.Database) ? null : options.Database;
-                    await seeder.RunAsync(options.Path, options.DropAndCreate, targetDatabase);
+                    // Validate options based on source type
+                    if (options.SourceType.ToLowerInvariant() == "cosmos")
+                    {
+                        // Reverse seeding: from Cosmos DB to files
+                        await HandleReverseSeeding(options, logger);
+                    }
+                    else
+                    {
+                        // Forward seeding: from files to Cosmos DB
+                        var seeder = provider.GetRequiredService<SeederService>();
+                        var targetDatabase = string.IsNullOrEmpty(options.Database) ? null : options.Database;
+                        await seeder.RunAsync(options.Path, options.DropAndCreate, targetDatabase);
+                    }
                     break;
                 case "servicebus":
                     await ServiceBusSeeder.RunAsync(options.Path, logger);
@@ -110,5 +120,115 @@ class Program
         deleteReq.Headers.Add("Authorization", GenerateAuthToken("delete", "colls", $"dbs/{dbName}/colls/{containerName}"));
         await client.SendAsync(deleteReq);
         await CreateContainerIfNotExistsAsync(client, dbName, containerName, needsPartitionKey);
+    }
+
+    private static async Task HandleReverseSeeding(Options options, ILogger<Program> logger)
+    {
+        // Validate required options for reverse seeding
+        if (string.IsNullOrEmpty(options.Database))
+        {
+            logger.LogError("Database name (-d) is required for reverse seeding.");
+            return;
+        }
+
+        string endpoint;
+        string key;
+
+        if (options.UseManagedIdentity)
+        {
+            logger.LogError("Managed identity authentication not yet implemented.");
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(options.ConnectionString))
+        {
+            // Parse connection string to extract endpoint and key
+            var (parsedEndpoint, parsedKey) = ParseConnectionString(options.ConnectionString);
+            if (string.IsNullOrEmpty(parsedEndpoint) || string.IsNullOrEmpty(parsedKey))
+            {
+                logger.LogError("Invalid connection string format.");
+                return;
+            }
+            endpoint = parsedEndpoint;
+            key = parsedKey;
+        }
+        else
+        {
+            // Default to emulator
+            endpoint = EmulatorEndpoint;
+            key = EmulatorKey;
+            logger.LogInformation("Using Cosmos DB Emulator for reverse seeding.");
+        }
+
+        // Create HTTP client
+        using var httpClient = new HttpClient(new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+        });
+        httpClient.BaseAddress = new Uri(endpoint);
+
+        // Create logger for exporter
+        var loggerFactory = LoggerFactory.Create(builder => builder.AddConsole());
+        var exporterLogger = loggerFactory.CreateLogger<CosmosDbExporter>();
+
+        // Create exporter with options
+        var exporter = new CosmosDbExporter(
+            httpClient, 
+            endpoint, 
+            key, 
+            exporterLogger,
+            options.PageSize,
+            options.MaxRU,
+            options.ForceUpdate
+        );
+
+        // Start export
+        logger.LogInformation("Starting reverse seeding from Cosmos DB...");
+        logger.LogInformation("Database: {Database}", options.Database);
+        logger.LogInformation("Container: {Container}", string.IsNullOrEmpty(options.Container) ? "All" : options.Container);
+        logger.LogInformation("Output Path: {Path}", options.Path);
+        logger.LogInformation("Page Size: {PageSize}", options.PageSize);
+        logger.LogInformation("Max RU/s: {MaxRU}", options.MaxRU);
+        logger.LogInformation("Force Update: {ForceUpdate}", options.ForceUpdate);
+
+        var success = await exporter.ExportDatabaseAsync(options.Database, options.Path, options.Container);
+        
+        if (success)
+        {
+            logger.LogInformation("Reverse seeding completed successfully.");
+        }
+        else
+        {
+            logger.LogError("Reverse seeding failed.");
+        }
+    }
+
+    private static (string endpoint, string key) ParseConnectionString(string connectionString)
+    {
+        try
+        {
+            var parts = connectionString.Split(';');
+            string endpoint = "";
+            string key = "";
+
+            foreach (var part in parts)
+            {
+                var trimmedPart = part.Trim();
+                if (trimmedPart.StartsWith("AccountEndpoint=", StringComparison.OrdinalIgnoreCase))
+                {
+                    endpoint = trimmedPart.Substring("AccountEndpoint=".Length);
+                }
+                else if (trimmedPart.StartsWith("AccountKey=", StringComparison.OrdinalIgnoreCase))
+                {
+                    key = trimmedPart.Substring("AccountKey=".Length);
+                }
+            }
+
+            return (endpoint, key);
+        }
+        catch (Exception)
+        {
+            return ("", "");
+        }
     }
 }
