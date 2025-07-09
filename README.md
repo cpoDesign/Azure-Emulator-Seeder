@@ -187,18 +187,18 @@ DataSeeder.exe -t cosmos -s cosmos -d Orders -p .\ExportedData --force-update
 
 ### Reverse Seeding (Azure → Files)
 
-| Option             | Required | Description                                          | Example                                    |
-| ------------------ | -------- | ---------------------------------------------------- | ------------------------------------------ |
-| -t, --targetType   | Yes      | Must be `cosmos` for reverse seeding                 | `-t cosmos`                                |
-| -s, --sourceType   | Yes      | Must be `cosmos` for reverse seeding                 | `-s cosmos`                                |
-| -d, --db           | Yes      | Name of Cosmos DB database to export                 | `-d Orders`                                |
-| -p, --path         | Yes      | Output folder path for exported JSON files           | `-p .\ExportedData`                        |
-| -c, --connectionString | No    | Cosmos DB connection string (uses emulator if not provided) | `-c "AccountEndpoint=https://..."`         |
-| --container        | No       | Specific container to export (exports all if not specified) | `--container OrderHistory`                 |
-| --managed-identity | No       | Use managed identity for authentication               | `--managed-identity`                       |
-| --page-size        | No       | Documents per page (default: 100, max: 1000)         | `--page-size 500`                          |
-| --max-ru           | No       | Maximum RU/s to consume (default: 400)               | `--max-ru 1000`                            |
-| --force-update     | No       | Force update all files even if unchanged             | `--force-update`                           |
+| Option                 | Required | Description                                                 | Example                            |
+| ---------------------- | -------- | ----------------------------------------------------------- | ---------------------------------- |
+| -t, --targetType       | Yes      | Must be `cosmos` for reverse seeding                        | `-t cosmos`                        |
+| -s, --sourceType       | Yes      | Must be `cosmos` for reverse seeding                        | `-s cosmos`                        |
+| -d, --db               | Yes      | Name of Cosmos DB database to export                        | `-d Orders`                        |
+| -p, --path             | Yes      | Output folder path for exported JSON files                  | `-p .\ExportedData`                |
+| -c, --connectionString | No       | Cosmos DB connection string (uses emulator if not provided) | `-c "AccountEndpoint=https://..."` |
+| --container            | No       | Specific container to export (exports all if not specified) | `--container OrderHistory`         |
+| --managed-identity     | No       | Use managed identity for authentication                     | `--managed-identity`               |
+| --page-size            | No       | Documents per page (default: 100, max: 1000)                | `--page-size 500`                  |
+| --max-ru               | No       | Maximum RU/s to consume (default: 400)                      | `--max-ru 1000`                    |
+| --force-update         | No       | Force update all files even if unchanged                    | `--force-update`                   |
 
 ## Data File Structure
 
