@@ -28,7 +28,7 @@ class Program
             {
                 case "cosmos":
                     // Validate options based on source type
-                    if (options.SourceType.ToLowerInvariant() == "cosmos")
+                    if (string.Equals(options.SourceType, "cosmos", StringComparison.OrdinalIgnoreCase))
                     {
                         // Reverse seeding: from Cosmos DB to files
                         await HandleReverseSeeding(options, logger);
