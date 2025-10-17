@@ -347,7 +347,7 @@ info: Successfully inserted document 'order-001' with explicit partition key (pk
 info: Successfully inserted document 'special-order' using document ID as partition key (pk='special-order') into container 'OrderContainer'
 ```
 
-![Example of the output](documentation/Exection.png)
+![Example of the output](documentation/Execution.png)
 
 ## Configuration
 
